@@ -1,13 +1,12 @@
 import { test, expect } from '@playwright/test';
 
-const BASE_URL      = 'https://eventhub.rahulshettyacademy.com';
 const USER_EMAIL    = 'rahulshetty1@gmail.com';
 const USER_PASSWORD = 'Magiclife1!';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 async function login(page) {
-  await page.goto(`${BASE_URL}/login`);
+  await page.goto('/login');
   await page.getByPlaceholder('you@email.com').fill(USER_EMAIL);
   await page.getByLabel('Password').fill(USER_PASSWORD);
   await page.locator('#login-btn').click();
@@ -21,7 +20,7 @@ async function login(page) {
  * Precondition: user must be logged in before calling.
  */
 async function bookEvent(page) {
-  await page.goto(`${BASE_URL}/events`);
+  await page.goto('/events');
 
   // Pick the first card that has a visible "Book Now" button (not sold out)
   const firstCard = page.getByTestId('event-card').filter({
@@ -54,7 +53,7 @@ async function bookEvent(page) {
  * Clears all bookings. Safe to call when already empty.
  */
 async function clearBookings(page) {
-  await page.goto(`${BASE_URL}/bookings`);
+  await page.goto('/bookings');
   const alreadyEmpty = await page.getByText('No bookings yet').isVisible().catch(() => false);
   if (alreadyEmpty) return;
 
@@ -75,7 +74,7 @@ test.describe('Booking Management — Critical Happy Paths', () => {
     const { bookingRef, eventTitle } = await bookEvent(page);
 
     // -- Step 2: Navigate to /bookings --
-    await page.goto(`${BASE_URL}/bookings`);
+    await page.goto('/bookings');
 
     // -- Step 3: Assert booking card appears with correct data --
     const card = page.getByTestId('booking-card').filter({ hasText: bookingRef });
@@ -93,7 +92,7 @@ test.describe('Booking Management — Critical Happy Paths', () => {
     const { bookingRef, eventTitle } = await bookEvent(page);
 
     // -- Step 2: Navigate to /bookings and click View Details --
-    await page.goto(`${BASE_URL}/bookings`);
+    await page.goto('/bookings');
     const card = page.getByTestId('booking-card').filter({ hasText: bookingRef });
     await card.getByRole('link', { name: 'View Details' }).click();
     await expect(page).toHaveURL(/\/bookings\/\d+/);
@@ -124,7 +123,7 @@ test.describe('Booking Management — Critical Happy Paths', () => {
     await clearBookings(page);
 
     // -- Step 2: Book the first available event --
-    await page.goto(`${BASE_URL}/events`);
+    await page.goto('/events');
     const firstCard = page.getByTestId('event-card').filter({
       has: page.getByTestId('book-now-btn'),
     }).first();
@@ -145,7 +144,7 @@ test.describe('Booking Management — Critical Happy Paths', () => {
 
     // -- Step 4: Click "View My Bookings" link on confirmation card --
     await page.getByRole('link', { name: 'View My Bookings' }).click();
-    await expect(page).toHaveURL(`${BASE_URL}/bookings`);
+    await expect(page).toHaveURL(/\/bookings$/);
 
     // -- Step 5: Assert the new booking appears in the list --
     const bookingCard = page.getByTestId('booking-card').filter({ hasText: bookingRef });
@@ -175,7 +174,7 @@ test.describe('Booking Management — Critical Happy Paths', () => {
     const { bookingRef } = await bookEvent(page);
 
     // -- Step 2: Navigate to booking detail via View Details --
-    await page.goto(`${BASE_URL}/bookings`);
+    await page.goto('/bookings');
     const card = page.getByTestId('booking-card').filter({ hasText: bookingRef });
     await card.getByRole('link', { name: 'View Details' }).click();
     await expect(page).toHaveURL(/\/bookings\/\d+/);
@@ -191,7 +190,7 @@ test.describe('Booking Management — Critical Happy Paths', () => {
     await page.locator('#confirm-dialog-yes').click();
 
     // -- Step 6: Assert redirect to /bookings and success toast --
-    await expect(page).toHaveURL(`${BASE_URL}/bookings`);
+    await expect(page).toHaveURL(/\/bookings$/);
     await expect(page.getByText('Booking cancelled successfully')).toBeVisible();
 
     // -- Step 7: Assert booking is no longer in the list --
@@ -206,7 +205,7 @@ test.describe('Booking Management — Critical Happy Paths', () => {
     await bookEvent(page);
 
     // -- Step 2: Navigate to /bookings and verify booking exists --
-    await page.goto(`${BASE_URL}/bookings`);
+    await page.goto('/bookings');
     await expect(page.getByTestId('booking-card').first()).toBeVisible();
 
     // -- Step 3: Click "Clear all bookings" and accept browser confirm dialog --

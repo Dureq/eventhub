@@ -2,14 +2,16 @@
 # Playwright E2E Tests
 #
 # PURPOSE:
-#   Runs the full Playwright test suite against the deployed production
-#   environment on every push to main. Uploads the HTML report as an artifact
-#   so results can be reviewed directly in the GitHub Actions UI.
+#   On every push to main, builds and starts this repo's own EventHub stack
+#   inside the runner (MySQL service + Express API + Next.js production build),
+#   seeds it, runs the full Playwright suite against localhost, and uploads the
+#   HTML report as an artifact.
 #
-# TRIGGER: push to main
+# TRIGGER: push to main (and manual runs)
 #
 # NOTES:
-#   - Tests run against https://eventhub.rahulshettyacademy.com (live site)
+#   - No external server or secrets: the "production" stack lives only for the
+#     duration of the job.
 #   - Chromium only (as configured in playwright.config.ts)
 #   - HTML report is retained for 30 days as a downloadable artifact
 # ══════════════════════════════════════════════════════════════════════════════
@@ -28,18 +30,44 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  NODE_VERSION: '21.7.1'
+  NODE_VERSION: '22'
 
 jobs:
 
   # ╔═══════════════════════════════════════════════════════════════════════════
   # ║  Playwright Tests
-  # ║  Installs dependencies, runs all specs, and uploads the HTML report.
+  # ║  Starts the full stack, runs all specs, and uploads the HTML report.
   # ╚═══════════════════════════════════════════════════════════════════════════
   playwright:
     name: Run Playwright Tests
     runs-on: ubuntu-latest
     timeout-minutes: 30
+
+    # ── MySQL ──────────────────────────────────────────────────────────────────
+    services:
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: eventhub
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -proot"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+
+    # Shared by the backend, the frontend build and the tests
+    env:
+      DATABASE_URL: mysql://root:root@127.0.0.1:3306/eventhub
+      JWT_SECRET: ci-only-jwt-secret
+      PORT: 3001
+      CORS_ORIGIN: http://localhost:3000
+      NEXT_PUBLIC_API_URL: http://localhost:3001/api
+      NEXT_TELEMETRY_DISABLED: 1
+      BASE_URL: http://localhost:3000
+      EVENTHUB_API_URL: http://localhost:3001/api
 
     steps:
       # ── Checkout ─────────────────────────────────────────────────────────────
@@ -52,11 +80,39 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
-          cache-dependency-path: package-lock.json
+          cache-dependency-path: |
+            package-lock.json
+            backend/package-lock.json
+            frontend/package-lock.json
 
-      # ── Install root dependencies ────────────────────────────────────────────
+      # ── Install dependencies ──────────────────────────────────────────────────
       - name: Install dependencies
-        run: npm ci
+        run: |
+          npm ci
+          npm ci --prefix backend
+          npm ci --prefix frontend
+
+      # ── Database: apply migrations and seed ──────────────────────────────────
+      # Seeding creates the static events and the test accounts used by the specs.
+      - name: Migrate and seed database
+        working-directory: backend
+        run: |
+          npx prisma migrate deploy
+          node prisma/seed.js
+
+      # ── Build frontend ────────────────────────────────────────────────────────
+      # NEXT_PUBLIC_API_URL is baked into the bundle at build time.
+      - name: Build frontend
+        run: npm run build --prefix frontend
+
+      # ── Start the stack in the background ────────────────────────────────────
+      - name: Start backend and frontend
+        run: |
+          nohup npm start --prefix backend  > backend.log  2>&1 &
+          nohup npm start --prefix frontend > frontend.log 2>&1 &
+
+      - name: Wait for services
+        run: npx --yes wait-on --timeout 120000 http://localhost:3001/api/health http://localhost:3000
 
       # ── Install Playwright browsers ──────────────────────────────────────────
       # Only installs Chromium (--with-deps installs OS-level dependencies too)
@@ -64,15 +120,12 @@ jobs:
         run: npx playwright install chromium --with-deps
 
       # ── Run all Playwright tests ─────────────────────────────────────────────
-      # Tests run against the live site defined in playwright.config.ts.
       # --reporter=html,line gives a browsable HTML report + inline line output.
-      # A test failure fails the job (red run); the upload step below still runs.
+      # A test failure fails the job (red run); the upload steps below still run.
       - name: Run Playwright tests
         run: npx playwright test --reporter=html,line
 
       # ── Upload HTML report as artifact ───────────────────────────────────────
-      # The report is generated in playwright-report/ by the html reporter.
-      # Retained for 30 days so the team can review results after a run.
       # `!cancelled()` uploads the report whether tests passed or failed.
       - name: Upload Playwright HTML report
         uses: actions/upload-artifact@v4
@@ -81,3 +134,14 @@ jobs:
           name: playwright-report-${{ github.run_id }}
           path: playwright-report/
           retention-days: 30
+
+      # ── Upload server logs on failure ────────────────────────────────────────
+      - name: Upload server logs
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: server-logs-${{ github.run_id }}
+          path: |
+            backend.log
+            frontend.log
+          retention-days: 7

@@ -27,8 +27,8 @@ npx playwright test tests/<file>.spec.js --reporter=line   # Run a single test f
 ```
 Backend-only: `npx prisma studio`, `npx prisma generate` (run from `backend/`).
 
-## IMPORTANT: Playwright tests target the live deployed site, not local dev
-`playwright.config.ts` sets `baseURL: 'https://eventhub.rahulshettyacademy.com'`, and all specs in `tests/` hardcode that same URL rather than reading `baseURL`. Running `npm run test` does **not** exercise your local `npm run dev` servers — it hits the deployed production-like instance. Keep this in mind when a test failure doesn't reproduce locally, or when a backend/frontend change needs to be deployed before a test can validate it.
+## Playwright tests target localhost
+`playwright.config.ts` uses `baseURL: process.env.BASE_URL || 'http://localhost:3000'`; specs use relative `page.goto('/...')`, and API-driven setup uses `EVENTHUB_API_URL` (default `http://localhost:3001/api`). Locally, `npm run test` reuses or starts `npm run dev` via `webServer` — MySQL must be running and seeded (`npm run db:push && npm run seed`), since the seed creates the test accounts. In CI the workflow starts its own stack (see CI/CD). Set `BASE_URL`/`EVENTHUB_API_URL` to point tests at another deployment.
 
 ## Project Structure
 ```
@@ -77,9 +77,9 @@ Full detail (data models, error codes, UI selectors, user flows) lives in `.clau
 - Test account: `rahulshetty1@gmail.com` / `Magiclife1!`
 
 ## CI/CD
-- `.github/workflows/ci.yml` — PR gate: backend syntax/Prisma validation, frontend `tsc --noEmit` + production build, and a schema-drift check that SSHes into the production server to diff the PR's `schema.prisma` against the live DB (read-only)
-- `.github/workflows/playwright.yml` — runs the full Playwright suite against the live site on every push to `main`, uploads the HTML report as an artifact
-- `.github/workflows/deploy.yml` — deployment, gated by `ci.yml` via `workflow_call`
+- `.github/workflows/ci.yml` — PR gate: backend syntax/Prisma validation, frontend `tsc --noEmit` + production build
+- `.github/workflows/playwright.yml` — on every push to `main`: starts a MySQL service, migrates + seeds it, builds and starts backend + frontend in the runner, runs the full Playwright suite against localhost, uploads the HTML report (and server logs on failure) as artifacts
+- There is no deployment workflow; the app is not hosted anywhere
 
 ## Custom Skills/Agents (`.claude/skills/`)
 Invoked as slash commands; each reads `eventhub-domain` and/or `playwright-best-practices` first:

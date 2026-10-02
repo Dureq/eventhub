@@ -15,8 +15,8 @@ import { test as base, expect, request as apiRequest } from '@playwright/test';
  * Page URLs come from `baseURL` in playwright.config.ts (§7 anti-pattern 10).
  */
 
-// The deployed frontend talks to a separate API host (see the Swagger link on /login).
-const API_BASE = process.env.EVENTHUB_API_URL || 'https://api.eventhub.rahulshettyacademy.com/api';
+// The frontend talks to a separate API host; override with EVENTHUB_API_URL.
+const API_BASE = process.env.EVENTHUB_API_URL || 'http://localhost:3001/api';
 
 const USER_EMAIL    = 'rahulshetty1@gmail.com';
 const USER_PASSWORD = 'Magiclife1!';
