@@ -106,10 +106,11 @@ jobs:
         run: npm run build --prefix frontend
 
       # ── Start the stack in the background ────────────────────────────────────
+      # `next start` also reads PORT, so the frontend gets its own value explicitly.
       - name: Start backend and frontend
         run: |
           nohup npm start --prefix backend  > backend.log  2>&1 &
-          nohup npm start --prefix frontend > frontend.log 2>&1 &
+          PORT=3000 nohup npm start --prefix frontend > frontend.log 2>&1 &
 
       - name: Wait for services
         run: npx --yes wait-on --timeout 120000 http://localhost:3001/api/health http://localhost:3000
