@@ -1,0 +1,98 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# EventHub — full stack + Playwright tests in Docker
+#
+# Run the whole test suite (only Docker required):
+#   docker compose up --build --exit-code-from tests --attach tests
+#
+# Just run the app and open http://localhost:3000:
+#   docker compose up --build frontend backend
+#
+# NETWORKING:
+#   The frontend bundle calls the API at http://localhost:3001/api from the
+#   browser. To make that URL valid both for the Playwright browser (inside the
+#   `tests` container) and for a browser on the host, `backend` and `tests`
+#   share the `frontend` container's network namespace. Inside it, the
+#   frontend is localhost:3000 and the API is localhost:3001; both ports are
+#   published on the host from the `frontend` service.
+#
+#   The database lives in tmpfs, so every start begins from a freshly seeded DB.
+# ══════════════════════════════════════════════════════════════════════════════
+
+name: eventhub
+
+services:
+  mysql:
+    image: mysql:8
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: eventhub
+    tmpfs:
+      - /var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-proot"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:3001/api
+    ports:
+      - "3000:3000"
+      - "3001:3001"   # the backend listens inside this container's network namespace
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+
+  backend:
+    build: ./backend
+    network_mode: service:frontend
+    environment:
+      DATABASE_URL: mysql://root:root@mysql:3306/eventhub
+      JWT_SECRET: docker-local-jwt-secret
+      PORT: 3001
+      CORS_ORIGIN: http://localhost:3000
+    depends_on:
+      mysql:
+        condition: service_healthy
+      frontend:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3001/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+
+  tests:
+    build:
+      context: .
+      dockerfile: Dockerfile.playwright
+    network_mode: service:frontend
+    environment:
+      CI: "1"   # disables the local webServer and the HTML report auto-open
+      BASE_URL: http://localhost:3000
+      EVENTHUB_API_URL: http://localhost:3001/api
+      HOST_UID: ${HOST_UID:-1000}
+      HOST_GID: ${HOST_GID:-1000}
+    volumes:
+      - ./playwright-report:/work/playwright-report
+      - ./test-results:/work/test-results
+    depends_on:
+      frontend:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    # Runs as root (the image's default); hand the report files back to the
+    # host user so they can be deleted without sudo on Linux.
+    command:
+      - sh
+      - -c
+      - |
+        npx playwright test --reporter=line,html
+        code=$$?
+        chown -R "$$HOST_UID:$$HOST_GID" playwright-report test-results 2>/dev/null
+        exit $$code

@@ -1,0 +1,11 @@
+# Playwright test runner — browsers and OS deps come with the base image.
+# Keep the tag in sync with @playwright/test in package-lock.json.
+FROM mcr.microsoft.com/playwright:v1.58.2-noble
+
+WORKDIR /work
+
+COPY package.json package-lock.json ./
+RUN npm ci
+
+COPY playwright.config.ts ./
+COPY tests ./tests

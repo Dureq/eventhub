@@ -1,0 +1,10 @@
+# Only package files, playwright.config.ts and tests/ are needed by Dockerfile.playwright
+node_modules
+**/node_modules
+frontend
+backend
+playwright-report
+test-results
+.git
+.env
+**/.env*

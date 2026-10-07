@@ -24,7 +24,9 @@ npm run test           # Run all Playwright tests
 npm run test:ui        # Playwright UI mode
 npm run test:report    # Open last HTML report
 npx playwright test tests/<file>.spec.js --reporter=line   # Run a single test file
+docker compose up --build --exit-code-from tests --attach tests   # Full stack + all tests in Docker, nothing else needed
 ```
+Docker setup: `docker-compose.yml` (mysql on tmpfs, frontend, backend, tests), `backend/Dockerfile`, `frontend/Dockerfile`, `Dockerfile.playwright` (keep its `mcr.microsoft.com/playwright` tag in sync with `@playwright/test`). `backend` and `tests` use `network_mode: service:frontend` so `localhost:3000`/`localhost:3001` work for the in-container browser and the host alike — `NEXT_PUBLIC_API_URL` is baked into the frontend bundle at build time.
 Backend-only: `npx prisma studio`, `npx prisma generate` (run from `backend/`).
 
 ## Playwright tests target localhost
@@ -48,7 +50,7 @@ eventhub/
 │   │   ├── validators/    # express-validator middleware
 │   │   └── middleware/     # authMiddleware (JWT verify), errorHandler, requestLogger
 │   └── prisma/             # schema.prisma (User/Event/Booking) + seed.js
-├── tests/              # Playwright E2E specs, run against the deployed site (see above)
+├── tests/              # Playwright E2E specs, run against localhost (see above)
 ├── .claude/skills/      # Domain knowledge + agent skills (see below)
 └── playwright.config.ts
 ```
@@ -78,7 +80,7 @@ Full detail (data models, error codes, UI selectors, user flows) lives in `.clau
 
 ## CI/CD
 - `.github/workflows/ci.yml` — PR gate: backend syntax/Prisma validation, frontend `tsc --noEmit` + production build
-- `.github/workflows/playwright.yml` — on every push to `main`: starts a MySQL service, migrates + seeds it, builds and starts backend + frontend in the runner, runs the full Playwright suite against localhost, uploads the HTML report (and server logs on failure) as artifacts
+- `.github/workflows/playwright.yml` — on every push to `main`: builds the Compose images and runs `docker compose up --exit-code-from tests --attach tests` (MySQL, backend, frontend and Playwright all in containers, nothing installed on the runner); uploads the HTML report, and the container logs on failure
 - There is no deployment workflow; the app is not hosted anywhere
 
 ## Custom Skills/Agents (`.claude/skills/`)

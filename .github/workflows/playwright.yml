@@ -2,17 +2,17 @@
 # Playwright E2E Tests
 #
 # PURPOSE:
-#   On every push to main, builds and starts this repo's own EventHub stack
-#   inside the runner (MySQL service + Express API + Next.js production build),
-#   seeds it, runs the full Playwright suite against localhost, and uploads the
-#   HTML report as an artifact.
+#   On every push to main, builds the Docker images from docker-compose.yml and
+#   runs the whole stack in containers: MySQL, the Express API, the Next.js
+#   production build, and the Playwright test runner (Dockerfile.playwright,
+#   official Playwright image with all browsers pre-installed). Nothing is
+#   installed on the runner itself. Uploads the HTML report as an artifact.
 #
 # TRIGGER: push to main (and manual runs)
 #
 # NOTES:
-#   - No external server or secrets: the "production" stack lives only for the
-#     duration of the job.
-#   - Chromium only (as configured in playwright.config.ts)
+#   - Same command as a local run (see README): `docker compose up ... tests`
+#   - No external server or secrets: the stack lives only for the job
 #   - HTML report is retained for 30 days as a downloadable artifact
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -29,102 +29,44 @@ concurrency:
   group: playwright-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  NODE_VERSION: '22'
-
 jobs:
 
   # ╔═══════════════════════════════════════════════════════════════════════════
-  # ║  Playwright Tests
-  # ║  Starts the full stack, runs all specs, and uploads the HTML report.
+  # ║  Playwright Tests (Docker)
+  # ║  Builds the images, runs the stack + tests, and uploads the HTML report.
   # ╚═══════════════════════════════════════════════════════════════════════════
   playwright:
-    name: Run Playwright Tests
+    name: Run Playwright Tests in Docker
     runs-on: ubuntu-latest
     timeout-minutes: 30
-
-    # ── MySQL ──────────────────────────────────────────────────────────────────
-    services:
-      mysql:
-        image: mysql:8
-        env:
-          MYSQL_ROOT_PASSWORD: root
-          MYSQL_DATABASE: eventhub
-        ports:
-          - 3306:3306
-        options: >-
-          --health-cmd="mysqladmin ping -h 127.0.0.1 -proot"
-          --health-interval=5s
-          --health-timeout=5s
-          --health-retries=20
-
-    # Shared by the backend, the frontend build and the tests
-    env:
-      DATABASE_URL: mysql://root:root@127.0.0.1:3306/eventhub
-      JWT_SECRET: ci-only-jwt-secret
-      PORT: 3001
-      CORS_ORIGIN: http://localhost:3000
-      NEXT_PUBLIC_API_URL: http://localhost:3001/api
-      NEXT_TELEMETRY_DISABLED: 1
-      BASE_URL: http://localhost:3000
-      EVENTHUB_API_URL: http://localhost:3001/api
 
     steps:
       # ── Checkout ─────────────────────────────────────────────────────────────
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # ── Node.js setup ─────────────────────────────────────────────────────────
-      - name: Setup Node.js ${{ env.NODE_VERSION }}
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-          cache-dependency-path: |
-            package-lock.json
-            backend/package-lock.json
-            frontend/package-lock.json
+      # ── Prepare output folders ───────────────────────────────────────────────
+      # Created by the runner user so the bind mounts aren't root-owned.
+      - name: Create report folders
+        run: mkdir -p playwright-report test-results
 
-      # ── Install dependencies ──────────────────────────────────────────────────
-      - name: Install dependencies
-        run: |
-          npm ci
-          npm ci --prefix backend
-          npm ci --prefix frontend
+      # ── Build images ─────────────────────────────────────────────────────────
+      # backend, frontend and tests (Playwright + browsers) images
+      - name: Build Docker images
+        run: docker compose build
 
-      # ── Database: apply migrations and seed ──────────────────────────────────
-      # Seeding creates the static events and the test accounts used by the specs.
-      - name: Migrate and seed database
-        working-directory: backend
-        run: |
-          npx prisma migrate deploy
-          node prisma/seed.js
-
-      # ── Build frontend ────────────────────────────────────────────────────────
-      # NEXT_PUBLIC_API_URL is baked into the bundle at build time.
-      - name: Build frontend
-        run: npm run build --prefix frontend
-
-      # ── Start the stack in the background ────────────────────────────────────
-      # `next start` also reads PORT, so the frontend gets its own value explicitly.
-      - name: Start backend and frontend
-        run: |
-          nohup npm start --prefix backend  > backend.log  2>&1 &
-          PORT=3000 nohup npm start --prefix frontend > frontend.log 2>&1 &
-
-      - name: Wait for services
-        run: npx --yes wait-on --timeout 120000 http://localhost:3001/api/health http://localhost:3000
-
-      # ── Install Playwright browsers ──────────────────────────────────────────
-      # Only installs Chromium (--with-deps installs OS-level dependencies too)
-      - name: Install Playwright browsers
-        run: npx playwright install chromium --with-deps
-
-      # ── Run all Playwright tests ─────────────────────────────────────────────
-      # --reporter=html,line gives a browsable HTML report + inline line output.
-      # A test failure fails the job (red run); the upload steps below still run.
+      # ── Run the stack and all Playwright tests ───────────────────────────────
+      # Exit code comes from the tests container, so a test failure fails the job.
+      # HOST_UID/HOST_GID let the container hand report files back to the runner user.
       - name: Run Playwright tests
-        run: npx playwright test --reporter=html,line
+        run: |
+          HOST_UID=$(id -u) HOST_GID=$(id -g) \
+            docker compose up --exit-code-from tests --attach tests
+
+      # ── Collect container logs ───────────────────────────────────────────────
+      - name: Collect container logs
+        if: ${{ !cancelled() }}
+        run: docker compose logs --no-color > compose.log
 
       # ── Upload HTML report as artifact ───────────────────────────────────────
       # `!cancelled()` uploads the report whether tests passed or failed.
@@ -136,13 +78,16 @@ jobs:
           path: playwright-report/
           retention-days: 30
 
-      # ── Upload server logs on failure ────────────────────────────────────────
-      - name: Upload server logs
+      # ── Upload container logs on failure ─────────────────────────────────────
+      - name: Upload container logs
         uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: server-logs-${{ github.run_id }}
-          path: |
-            backend.log
-            frontend.log
+          name: compose-logs-${{ github.run_id }}
+          path: compose.log
           retention-days: 7
+
+      # ── Cleanup ──────────────────────────────────────────────────────────────
+      - name: Stop containers
+        if: always()
+        run: docker compose down -v

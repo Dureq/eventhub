@@ -10,7 +10,29 @@ A full-stack ticket booking platform built with **Next.js 14**, **Express.js**, 
 
 ---
 
-## Prerequisites
+## Run the tests with Docker (no Node, MySQL or browsers needed)
+
+The only requirement is Docker with the Compose plugin (Docker Desktop includes it).
+
+```bash
+git clone git@github.com:Dureq/eventhub.git
+cd eventhub
+docker compose up --build --exit-code-from tests --attach tests
+```
+
+This builds and starts MySQL, the API and the frontend, seeds a fresh database, runs the full Playwright suite in Chromium, then stops everything. The command's exit code is the test result, and GitHub Actions runs this same command on every push to `main`. The HTML report is written to `playwright-report/` — open `playwright-report/index.html` in a browser.
+
+To just run the app in Docker and use it at http://localhost:3000 (API and Swagger UI at http://localhost:3001/api/docs):
+
+```bash
+docker compose up --build frontend backend
+```
+
+Stop and remove the containers with `docker compose down`. Ports 3000 and 3001 must be free while the stack runs.
+
+---
+
+## Prerequisites (local development without Docker)
 
 - **Node.js 18+**
 - **MySQL 8+** running locally (or a remote instance)
