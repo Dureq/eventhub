@@ -43,7 +43,7 @@ jobs:
     steps:
       # ── Checkout ─────────────────────────────────────────────────────────────
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # ── Prepare output folders ───────────────────────────────────────────────
       # Created by the runner user so the bind mounts aren't root-owned.
@@ -71,7 +71,7 @@ jobs:
       # ── Upload HTML report as artifact ───────────────────────────────────────
       # `!cancelled()` uploads the report whether tests passed or failed.
       - name: Upload Playwright HTML report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
           name: playwright-report-${{ github.run_id }}
@@ -80,7 +80,7 @@ jobs:
 
       # ── Upload container logs on failure ─────────────────────────────────────
       - name: Upload container logs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: compose-logs-${{ github.run_id }}
